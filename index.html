@@ -644,7 +644,7 @@ async function initSheet(){
     }
     // Headers
     try{const h=await sGet('Diario!A1');if(!h.values)await sBatch([{range:'Diario!A1:L1',values:[['AÑO','MES','FECHA','TIPO','CATEGORIA','SUBCATEGORIA','DETALLE','GENERADOR','MP_ORIGEN','MP_DESTINO','MONTO','SALDO']]}]);}catch(e){}
-    try{const h=await sGet('Presupuesto!A1');if(!h.values)await sBatch([{range:'Presupuesto!A1:G1',values:[['AÑO','MES','CATEGORIA','CONCEPTO','PRESUPUESTADO','VENCIMIENTO','ORDEN']]}]);}catch(e){}
+    try{const h=await sGet('Presupuesto!A1');if(!h.values)await sBatch([{range:'Presupuesto!A1:G1',values:[['MES','AÑO','CATEGORIA','CONCEPTO','PRESUPUESTADO','REAL','VENCIMIENTO']]}]);}catch(e){}
   }catch(e){toast('Error iniciando: '+e.message,'err');console.error(e);}
 }
 
@@ -670,8 +670,9 @@ async function loadAll(){
     });
     allMovs=rawMovs;
     allPresup=(p.values||[]).map(r=>({
-      año:r[0]||'', mes:r[1]||'', cat:r[2]||'', concepto:r[3]||'',
-      presup:parseMonto(String(r[4]||0)), venc:r[5]||'', orden:parseInt(r[6])||0
+      // Sheet columns: Mes(A)|Año(B)|Categoría(C)|Concepto(D)|Presupuestado(E)|Real(F)|Vencimiento(G)
+      mes:r[0]||'', año:r[1]||'', cat:r[2]||'', concepto:r[3]||'',
+      presup:parseMonto(String(r[4]||0)), real:parseMonto(String(r[5]||0)), venc:r[6]||''
     }));
   }catch(e){toast('Error cargando datos','err');console.error(e);}
 }
@@ -868,12 +869,14 @@ function confirmDelMov(row,det){
   document.getElementById('modal-ok').onclick=executeDelMov;
   document.getElementById('modal').classList.add('show');
 }
-function closeModal(){document.getElementById('modal').classList.remove('show');pendingDel=null;}
+function closeModal(){document.getElementById('modal').classList.remove('show');}
 
 async function executeDelMov(){
+  const saved=pendingDel; // save BEFORE closing
+  pendingDel=null;
   closeModal();
-  if(!pendingDel)return;
-  const {row}=pendingDel;
+  if(!saved)return;
+  const {row}=saved;
   toast('Eliminando...','ok');
   try{
     // row is the 1-based sheet row number (row 1 = header, row 2 = first data row)
@@ -942,7 +945,7 @@ async function saveMov(){
     else if(curTipo==='TRASPASO') nuevoSaldo=ultimo;
     else                          nuevoSaldo=ultimo-monto;
     const año=fecha.split('-')[0];
-    const fechaD=fecha.split('-').reverse().join('/');
+    const fechaD="'"+fecha.split('-').reverse().join('/'); // apostrophe forces text in Sheets
     await sAppend('Diario!A:L',[[año,mes,fechaD,curTipo,cat,sub,det,gen,mp,mp2,monto,nuevoSaldo]]);
     // Update local cache
     allMovs.push({row:allMovs.length+2,año,mes,fecha:fechaD,tipo:curTipo,cat,subcat:sub,det,gen,mp,mp2,monto,saldo:nuevoSaldo});
@@ -1030,7 +1033,7 @@ function renderPresup(){
 async function copyPresup(mes,año,mesAnt,añoAnt){
   const prev=allPresup.filter(p=>p.año===añoAnt&&p.mes===mesAnt);
   if(!prev.length){toast('Sin presupuesto en '+mesAnt,'err');return;}
-  const rows=prev.map(p=>[año,mes,p.cat,p.concepto,p.presup,'',0]);
+  const rows=prev.map(p=>[mes,año,p.cat,p.concepto,p.presup,'','']);
   try{
     await sAppend('Presupuesto!A:G',rows);
     await loadAll();
@@ -1056,8 +1059,8 @@ function addPresupItem(mes,año){
   const concepto=prompt('Nombre del ítem (ej: Alquiler):');if(!concepto)return;
   const cat=prompt('Categoría (ej: Gastos Fijos, Tarjetas, Ahorro):');if(!cat)return;
   const monto=parseMonto(prompt('Monto presupuestado:')||'');if(!monto)return;
-  allPresup.push({año,mes,cat,concepto,presup:monto,venc:'',orden:0});
-  sAppend('Presupuesto!A:G',[[año,mes,cat,concepto,monto,'',0]])
+  allPresup.push({mes,año,cat,concepto,presup:monto,real:0,venc:''});
+  sAppend('Presupuesto!A:G',[[mes,año,cat,concepto,monto,'','']])
     .then(()=>{toast('Ítem agregado ✓','ok');renderPresup();})
     .catch(e=>toast('Error: '+e.message,'err'));
 }
@@ -1070,9 +1073,11 @@ function confirmDelPresup(concepto,mes,año){
   document.getElementById('modal').classList.add('show');
 }
 async function executeDelPresup(){
+  const saved=pendingDel; // save BEFORE closing
+  pendingDel=null;
   closeModal();
-  if(!pendingDel||pendingDel.type!=='presup')return;
-  const{concepto,mes,año}=pendingDel;
+  if(!saved||saved.type!=='presup')return;
+  const{concepto,mes,año}=saved;
   const idx=allPresup.findIndex(p=>p.concepto===concepto&&p.mes===mes&&p.año===año);
   if(idx<0){toast('No se encontró el ítem','err');return;}
   try{
